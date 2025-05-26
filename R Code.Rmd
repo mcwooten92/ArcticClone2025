@@ -1,0 +1,185 @@
+---
+title: "Outbreak Analyses"
+author: "McCaide Wooten"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r Setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Load Libraries#
+library(tidyverse)
+library(stats)
+library(MASS)
+library(ggthemes)
+library(ggsci)
+library(readxl)
+library(dplyr)
+library(readr)
+library(glmulti)
+library(ggplot2)
+library(survival)
+library(reshape2)
+library(GlmSimulatoR)
+library(AER)
+library(kableExtra)
+library(Hmisc)
+library(knitr)
+library(vtable)
+library(foreign)
+library(corrplot)
+library(MuMIn)
+library(glmulti)
+library(table1)
+library(flextable)
+library(beepr)
+library(aod)
+library(extrafont)
+library(car)        
+library(ResourceSelection)
+library(pROC)
+
+```
+
+```{r Population Structure Plotting}
+### Definitive & Presumptive Cases ###
+
+#Load Data#
+Data <- read_csv("C:/INSERT FILE DIRECTORY/Carcasses.csv")
+
+#Data Modification
+AgeSexCases <- Data %>%
+  group_by(Age) %>%                     
+  filter(!is.na(Age), Sex != "U",`Case` != "N") %>%
+  ungroup()
+
+AgeSexCases$Age <- as.numeric(AgeSexCases$Age)
+
+AgeSexCases_Grouped <- AgeSexCases %>%
+  mutate(AgeGroup = cut(Age,
+  breaks = c(0,.99,1.01,2.01,3.01,4.01,Inf), # Define age group ranges
+  labels = c("<1", "1", "2", "3", "4", "5+"),
+  right = FALSE
+  ))
+
+# Aggregate data by age group and sex
+agg_AgeSexCases <- AgeSexCases_Grouped %>%
+  count(AgeGroup, Sex) %>% # Count entries per age group and gender
+  mutate(population = ifelse(Sex == "M", -n, n)) # Make males negative for the pyramid
+
+# Create the population pyramid
+pyramid_plot_cases <- ggplot(agg_AgeSexCases, aes(x = AgeGroup, y = population, fill = Sex)) +
+  geom_bar(stat = "identity", width = 0.85, color = "black", linewidth = 0.2) + # Thin borders
+  scale_y_continuous(labels = abs,              # Show absolute values on y-axis
+                     breaks = seq(-25, 25, 5),
+                     limits = c(-30, 30) # Adjust limits for symmetry)
+  ) +
+  coord_flip() +                                # Flip coordinates for horizontal bars
+  labs(
+    title = "Definitive & Presumptive Cases",
+    x = "Age (Years)",
+    y = "Count",
+    fill = NULL # Remove legend title
+  ) +
+  scale_fill_manual(values = c("M" = "#2166AC", "F" = "#B2182B")
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 12, face = "plain"),                            
+    axis.title.x = element_text(size = 12, face = "plain"),  # Plain x-axis title
+    axis.title.y = element_text(size = 12, face = "plain"),  # Plain y-axis title
+    axis.text = element_text(size = 10),                    # Smaller tick labels
+    legend.position = "right",                                 # Legend on right
+    legend.text = element_text(size = 10),                   # Smaller legend text
+    panel.grid.major = element_blank(),                      # No gridlines
+    panel.grid.minor = element_blank()                       # No minor gridlines
+  )
+
+# Display the plot
+print(pyramid_plot_cases)
+
+
+
+### All Sampled Carcasses ###
+
+#Data Modification
+AgeSexCleaned <- Data %>%
+  group_by(Age) %>%                     
+  filter(!is.na(Age), Sex != "U", Sampled != "N") %>%
+  ungroup()
+
+AgeSexCleaned$Age <- as.numeric(AgeSexCleaned$Age)
+
+AgeSexCleaned_Grouped <- AgeSexCleaned %>%
+  mutate(AgeGroup = cut(Age,
+  breaks = c(0,.99,1.01,2.01,3.01,4.01,Inf), # Define age group ranges
+  labels = c("<1", "1", "2", "3", "4", "5+"),
+  right = FALSE
+  ))
+
+# Aggregate data by age group and sex
+agg_AgeSexCleaned <- AgeSexCleaned_Grouped %>%
+  count(AgeGroup, Sex) %>% # Count entries per age group and gender
+  mutate(population = ifelse(Sex == "M", -n, n)) # Make males negative for the pyramid
+
+# Create the population pyramid
+pyramid_plot_all <- ggplot(agg_AgeSexCleaned, aes(x = AgeGroup, y = population, fill = Sex)) +
+  geom_bar(stat = "identity", width = 0.85, color = "black", linewidth = 0.2) + # Thin borders
+  scale_y_continuous(labels = abs,              # Show absolute values on y-axis
+                     breaks = seq(-100, 100, 20),
+                     limits = c(-120, 120) # Adjust limits for symmetry)
+  ) +
+  coord_flip() +                                # Flip coordinates for horizontal bars
+  labs(
+    title = "All Sampled Carcasses",
+    x = "Age (Years)",
+    y = "Count",
+    fill = NULL # Remove legend title
+  ) +
+  scale_fill_manual(values = c("M" = "#2166AC", "F" = "#B2182B")
+  ) +
+  theme_classic(base_size = 12) + 
+  theme(
+    plot.title = element_text(size = 12, face = "plain"),                            
+    axis.title.x = element_text(size = 12, face = "plain"),  # Plain x-axis title
+    axis.title.y = element_text(size = 12, face = "plain"),  # Plain y-axis title
+    axis.text = element_text(size = 10),                    # Smaller tick labels
+    legend.position = "right",                                 # Legend on right
+    legend.text = element_text(size = 10),                   # Smaller legend text
+    panel.grid.major = element_blank(),                      # No gridlines
+    panel.grid.minor = element_blank()                       # No minor gridlines
+  )
+
+# Display the plot
+print(pyramid_plot_all)
+```
+
+
+```{r Chi Square Comparisons of Live Population Observations to Calculated "Norms"}
+
+# Load the dataset
+chi_data <- read_excel("C:/INSERT FILE DIRECTORY/ChiSquare.xlsx", sheet = "Sheet1")
+
+# Group by Analysis, Year, Observational Unit, and Location, then run chi-square tests
+chi_results <- chi_data %>%
+  group_by(Analysis, Location, Observational_Unit, Year) %>%
+  summarise(
+    Statistic = chisq.test(Observed, p = Expected / sum(Expected))$statistic,
+    DF = chisq.test(Observed, p = Expected / sum(Expected))$parameter,
+    P_Value = chisq.test(Observed, p = Expected / sum(Expected))$p.value,
+    .groups = "drop"
+  )
+
+# Print results
+print(chi_results)
+
+# Male:Female Case Analysis
+observed <- c(20, 10)
+expected <- c(13, 17)
+
+chisq_testMF <- chisq.test(x = observed, p = expected/sum(expected), rescale.p = TRUE)
+
+print(chisq_testMF)
